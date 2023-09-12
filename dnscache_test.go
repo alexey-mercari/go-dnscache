@@ -1,22 +1,21 @@
 package dnscache
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
+	"os"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"go.uber.org/zap/zaptest/observer"
 )
 
 var (
-	testLogger               = zap.NewNop()
+	testLogger               = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	testFreq                 = 1 * time.Second
 	testDefaultLookupTimeout = 1 * time.Second
 )
@@ -56,15 +55,9 @@ func TestLookup(t *testing.T) {
 	cases := []struct {
 		name string
 	}{
-		{
-			"api.mercari.jp",
-		},
-		{
-			"endpoint-api-origin.mercari.jp",
-		},
-		{
-			"google.com",
-		},
+		{"go.mercari.io"},
+		{"yandex.ru"},
+		{"google.com"},
 	}
 
 	resolver := testResolver(t)
@@ -87,20 +80,15 @@ func TestLookup(t *testing.T) {
 }
 
 func TestLookupCache(t *testing.T) {
-	originalFunc := lookupIP
-	defer func() {
-		lookupIP = originalFunc
-	}()
-
 	want := []net.IP{
 		net.IP("35.190.50.136"),
-	}
-	lookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
-		return want, nil
 	}
 
 	ctx := context.Background()
 	resolver := testResolver(t)
+	resolver.lookupIPFn = func(ctx context.Context, host string) ([]net.IP, error) {
+		return want, nil
+	}
 	defer resolver.Stop()
 
 	got, err := resolver.LookupIP(ctx, "gateway.io")
@@ -123,14 +111,11 @@ func TestLookupCache(t *testing.T) {
 }
 
 func TestLookupTimeout(t *testing.T) {
-	originalFunc := lookupIP
-	defer func() {
-		lookupIP = originalFunc
-	}()
-
 	ctx, cancelF := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancelF()
-	lookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
+
+	resolver := testResolver(t)
+	resolver.lookupIPFn = func(ctx context.Context, host string) ([]net.IP, error) {
 		for {
 			select {
 			case <-ctx.Done():
@@ -140,8 +125,6 @@ func TestLookupTimeout(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
-
-	resolver := testResolver(t)
 	defer resolver.Stop()
 
 	_, err := resolver.LookupIP(ctx, "gateway.io")
@@ -151,19 +134,14 @@ func TestLookupTimeout(t *testing.T) {
 }
 
 func TestRefresh(t *testing.T) {
-	originalFunc := lookupIP
-	defer func() {
-		lookupIP = originalFunc
-	}()
-
 	want := []net.IP{
 		net.IP("4.4.4.4"),
 	}
-	lookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
-		return want, nil
-	}
 
 	resolver := testResolver(t)
+	resolver.lookupIPFn = func(ctx context.Context, host string) ([]net.IP, error) {
+		return want, nil
+	}
 	defer resolver.Stop()
 	resolver.cache = map[string][]net.IP{
 		"deeeet.jp": {
@@ -189,20 +167,15 @@ func TestRefresh(t *testing.T) {
 }
 
 func TestRefreshed(t *testing.T) {
-	originalFunc := onRefreshed
-	defer func() {
-		onRefreshed = originalFunc
-	}()
-
 	var counter int32
-	onRefreshed = func() {
-		atomic.AddInt32(&counter, 1)
-	}
 
 	resolver, err := New(1*time.Millisecond, testDefaultLookupTimeout, testLogger)
 	defer resolver.Stop()
 	if err != nil {
 		t.Fatalf("err: %v", err)
+	}
+	resolver.onCacheRefreshedFn = func() {
+		atomic.AddInt32(&counter, 1)
 	}
 	time.Sleep(10 * time.Millisecond)
 
@@ -213,23 +186,17 @@ func TestRefreshed(t *testing.T) {
 }
 
 func TestFetch(t *testing.T) {
-	mu := new(sync.Mutex)
-
-	originalFunc := lookupIP
-	defer func() {
-		lookupIP = originalFunc
-	}()
-
+	var mu sync.Mutex
 	var returnIPs []net.IP
-	lookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
+
+	ctx := context.Background()
+	resolver := testResolver(t)
+	resolver.lookupIPFn = func(ctx context.Context, host string) ([]net.IP, error) {
 		mu.Lock()
 		ips := returnIPs
 		mu.Unlock()
 		return ips, nil
 	}
-
-	ctx := context.Background()
-	resolver := testResolver(t)
 	defer resolver.Stop()
 
 	want1 := []net.IP{
@@ -279,37 +246,26 @@ func TestFetch(t *testing.T) {
 }
 
 func TestErrorLog(t *testing.T) {
-	originalFunc1 := lookupIP
-	defer func() {
-		lookupIP = originalFunc1
-	}()
+	done := make(chan struct{})
 
-	originalFunc2 := onRefreshed
-	defer func() {
-		onRefreshed = originalFunc2
-	}()
-
-	done := make(chan struct{}, 1)
-	onRefreshed = func() {
-		done <- struct{}{}
-	}
-
-	lookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
-		return nil, fmt.Errorf("err")
-	}
-
-	core, observed := observer.New(zapcore.DebugLevel)
-	logger := zap.New(core)
+	logs := new(bytes.Buffer)
+	logger := slog.New(slog.NewTextHandler(logs, nil))
 
 	resolver, err := New(0, 0, logger)
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
 	defer resolver.Stop()
+	resolver.lookupIPFn = func(ctx context.Context, host string) ([]net.IP, error) {
+		return nil, fmt.Errorf("err")
+	}
+	resolver.onCacheRefreshedFn = func() {
+		close(done)
+	}
 
 	<-done
-	entries := observed.AllUntimed()
-	if got, want := len(entries), 1; got >= want {
-		t.Fatalf("expect logger called more than once")
+
+	if logs.Len() > 0 {
+		t.Fatalf("unexpected logs with empty cache")
 	}
 }

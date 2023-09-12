@@ -120,16 +120,12 @@ func TestDialFuncError1(t *testing.T) {
 }
 
 func TestDialFuncError2(t *testing.T) {
-	originalFunc := lookupIP
-	defer func() {
-		lookupIP = originalFunc
-	}()
-
-	lookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver := testResolver(t)
+	resolver.lookupIPFn = func(ctx context.Context, host string) ([]net.IP, error) {
 		return nil, fmt.Errorf("err")
 	}
 
-	if _, err := DialFunc(testResolver(t), nil)(context.Background(), "tcp", "tcnksm.io:443"); err == nil {
+	if _, err := DialFunc(resolver, nil)(context.Background(), "tcp", "tcnksm.io:443"); err == nil {
 		t.Fatalf("expect to be failed")
 	}
 }
