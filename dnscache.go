@@ -20,9 +20,13 @@ var (
 	defaultLookupTimeout = 10 * time.Second
 )
 
+type (
+	LookupIPFn func(ctx context.Context, host string) ([]net.IP, error)
+)
+
 // Resolver is DNS cache resolver which cache DNS resolve results in memory.
 type Resolver struct {
-	lookupIPFn         func(ctx context.Context, host string) ([]net.IP, error)
+	ipLookupFn         LookupIPFn
 	lookupTimeout      time.Duration
 	onCacheRefreshedFn func()
 
@@ -38,7 +42,7 @@ type Resolver struct {
 
 // New initializes DNS cache resolver and starts auto refreshing in a new goroutine.
 // To stop refreshing, call `Stop()` function.
-func New(freq time.Duration, lookupTimeout time.Duration, logger *slog.Logger) (*Resolver, error) {
+func New(freq time.Duration, lookupTimeout time.Duration, logger *slog.Logger, params ...Param) (*Resolver, error) {
 	if freq <= 0 {
 		freq = defaultFreq
 	}
@@ -59,9 +63,9 @@ func New(freq time.Duration, lookupTimeout time.Duration, logger *slog.Logger) (
 	}
 
 	r := &Resolver{
-		// lookupIPFn is a wrapper of net.DefaultResolver.LookupIPAddr.
+		// ipLookupFn is a wrapper of net.DefaultResolver.LookupIPAddr.
 		// This is used to replace lookup function when test.
-		lookupIPFn: func(ctx context.Context, host string) ([]net.IP, error) {
+		ipLookupFn: func(ctx context.Context, host string) ([]net.IP, error) {
 			addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 			if err != nil {
 				return nil, err
@@ -79,6 +83,10 @@ func New(freq time.Duration, lookupTimeout time.Duration, logger *slog.Logger) (
 		defaultLookupTimeout: lookupTimeout,
 		logger:               logger,
 		closer:               closer,
+	}
+
+	for _, p := range params {
+		p.apply(r)
 	}
 
 	go func() {
@@ -101,7 +109,7 @@ func New(freq time.Duration, lookupTimeout time.Duration, logger *slog.Logger) (
 // LookupIP lookups IP list from DNS server then it saves result in the cache.
 // If you want to get result from the cache use `Fetch` function.
 func (r *Resolver) LookupIP(ctx context.Context, addr string) ([]net.IP, error) {
-	ips, err := r.lookupIPFn(ctx, addr)
+	ips, err := r.ipLookupFn(ctx, addr)
 	if err != nil {
 		return nil, err
 	}

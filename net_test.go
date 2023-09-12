@@ -121,7 +121,7 @@ func TestDialFuncError1(t *testing.T) {
 
 func TestDialFuncError2(t *testing.T) {
 	resolver := testResolver(t)
-	resolver.lookupIPFn = func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver.ipLookupFn = func(ctx context.Context, host string) ([]net.IP, error) {
 		return nil, fmt.Errorf("err")
 	}
 
