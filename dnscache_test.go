@@ -4,9 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log/slog"
+	"log"
 	"net"
-	"os"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -15,14 +14,13 @@ import (
 )
 
 var (
-	testLogger               = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	testFreq                 = 1 * time.Second
 	testDefaultLookupTimeout = 1 * time.Second
 )
 
 func testResolver(t *testing.T, params ...Param) *Resolver {
 	t.Helper()
-	r, err := New(testFreq, testDefaultLookupTimeout, testLogger, params...)
+	r, err := New(testFreq, testDefaultLookupTimeout, params...)
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -30,12 +28,8 @@ func testResolver(t *testing.T, params ...Param) *Resolver {
 }
 
 func TestNew(t *testing.T) {
-	if _, err := New(testFreq, testDefaultLookupTimeout, nil); err == nil {
-		t.Fatalf("expect to be failed")
-	}
-
 	{
-		resolver, err := New(testFreq, testDefaultLookupTimeout, testLogger)
+		resolver, err := New(testFreq, testDefaultLookupTimeout)
 		if err != nil {
 			t.Fatalf("expect not to be failed")
 		}
@@ -43,7 +37,7 @@ func TestNew(t *testing.T) {
 	}
 
 	{
-		resolver, err := New(0, 0, testLogger)
+		resolver, err := New(0, 0)
 		if err != nil {
 			t.Fatalf("expect not to be failed")
 		}
@@ -166,7 +160,7 @@ func TestRefresh(t *testing.T) {
 func TestRefreshed(t *testing.T) {
 	var counter int32
 
-	resolver, err := New(1*time.Millisecond, testDefaultLookupTimeout, testLogger, WithRefreshCompletedListener(func() {
+	resolver, err := New(1*time.Millisecond, testDefaultLookupTimeout, WithRefreshCompletedListener(func() {
 		atomic.AddInt32(&counter, 1)
 	}))
 	defer resolver.Stop()
@@ -244,9 +238,9 @@ func TestErrorLog(t *testing.T) {
 	done := make(chan struct{})
 
 	logs := new(bytes.Buffer)
-	logger := slog.New(slog.NewTextHandler(logs, nil))
+	log.SetOutput(logs)
 
-	resolver, err := New(0, 0, logger,
+	resolver, err := New(0, 0,
 		WithCustomIPLookupFunc(func(ctx context.Context, host string) ([]net.IP, error) {
 			return nil, fmt.Errorf("err")
 		}),
