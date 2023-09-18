@@ -6,7 +6,7 @@ type Option struct {
 	apply func(r *Resolver)
 }
 
-func WithCustomIPLookupFunc(fn LookupIPFn) Option {
+func WithLookupIPFunc(fn LookupIPFn) Option {
 	return Option{apply: func(r *Resolver) {
 		r.lookupIPFn = fn
 	}}

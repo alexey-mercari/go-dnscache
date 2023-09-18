@@ -79,7 +79,7 @@ func TestLookupCache(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	resolver := testResolver(t, WithCustomIPLookupFunc(func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver := testResolver(t, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
 		return want, nil
 	}))
 	defer resolver.Stop()
@@ -107,7 +107,7 @@ func TestLookupTimeout(t *testing.T) {
 	ctx, cancelF := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancelF()
 
-	resolver := testResolver(t, WithCustomIPLookupFunc(func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver := testResolver(t, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
 		for {
 			select {
 			case <-ctx.Done():
@@ -130,7 +130,7 @@ func TestRefresh(t *testing.T) {
 		net.IP("4.4.4.4"),
 	}
 
-	resolver := testResolver(t, WithCustomIPLookupFunc(func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver := testResolver(t, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
 		return want, nil
 	}))
 	defer resolver.Stop()
@@ -160,7 +160,7 @@ func TestRefresh(t *testing.T) {
 func TestRefreshed(t *testing.T) {
 	var counter int32
 
-	resolver, err := New(time.Millisecond, testDefaultLookupTimeout, WithCustomIPLookupFunc(func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver, err := New(time.Millisecond, testDefaultLookupTimeout, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
 		atomic.AddInt32(&counter, 1)
 		return []net.IP{net.IP("127.0.0.1")}, nil
 	}))
@@ -185,7 +185,7 @@ func TestFetch(t *testing.T) {
 	var returnIPs []net.IP
 
 	ctx := context.Background()
-	resolver := testResolver(t, WithCustomIPLookupFunc(func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver := testResolver(t, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
 		mu.Lock()
 		ips := returnIPs
 		mu.Unlock()
@@ -273,7 +273,7 @@ func TestErrorLog(t *testing.T) {
 			var logs = new(logsWriter)
 			logger := slog.New(slog.NewJSONHandler(logs, nil))
 
-			resolver, err := New(time.Millisecond, 0, WithCustomIPLookupFunc(func(context.Context, string) (res []net.IP, err error) {
+			resolver, err := New(time.Millisecond, 0, WithLookupIPFunc(func(context.Context, string) (res []net.IP, err error) {
 				return nil, errors.New("err")
 			}), WithLogger(logger))
 			if err != nil {
