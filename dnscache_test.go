@@ -27,6 +27,13 @@ func testResolver(t *testing.T, params ...Option) *Resolver {
 	return r
 }
 
+func setLookupUpFn(t *testing.T, resolver *Resolver, fn LookupIPFn) {
+	t.Helper()
+	resolver.cacheMu.Lock()
+	defer resolver.cacheMu.Unlock()
+	resolver.lookupIPFn = fn
+}
+
 func TestNew(t *testing.T) {
 	{
 		resolver, err := New(testFreq, testDefaultLookupTimeout)
@@ -79,10 +86,11 @@ func TestLookupCache(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	resolver := testResolver(t, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
-		return want, nil
-	}))
+	resolver := testResolver(t)
 	defer resolver.Stop()
+	setLookupUpFn(t, resolver, func(ctx context.Context, host string) ([]net.IP, error) {
+		return want, nil
+	})
 
 	got, err := resolver.LookupIP(ctx, "gateway.io")
 	if err != nil {
@@ -107,7 +115,9 @@ func TestLookupTimeout(t *testing.T) {
 	ctx, cancelF := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancelF()
 
-	resolver := testResolver(t, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver := testResolver(t)
+	defer resolver.Stop()
+	setLookupUpFn(t, resolver, func(ctx context.Context, host string) ([]net.IP, error) {
 		for {
 			select {
 			case <-ctx.Done():
@@ -116,8 +126,7 @@ func TestLookupTimeout(t *testing.T) {
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
-	}))
-	defer resolver.Stop()
+	})
 
 	_, err := resolver.LookupIP(ctx, "gateway.io")
 	if err == nil {
@@ -130,10 +139,11 @@ func TestRefresh(t *testing.T) {
 		net.IP("4.4.4.4"),
 	}
 
-	resolver := testResolver(t, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
-		return want, nil
-	}))
+	resolver := testResolver(t)
 	defer resolver.Stop()
+	setLookupUpFn(t, resolver, func(ctx context.Context, host string) ([]net.IP, error) {
+		return want, nil
+	})
 	resolver.cache = map[string][]net.IP{
 		"deeeet.jp": {
 			net.IP("1.1.1.1"),
@@ -160,15 +170,16 @@ func TestRefresh(t *testing.T) {
 func TestRefreshed(t *testing.T) {
 	var counter int32
 
-	resolver, err := New(time.Millisecond, testDefaultLookupTimeout, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver, err := New(time.Millisecond, testDefaultLookupTimeout)
+	defer resolver.Stop()
+
+	setLookupUpFn(t, resolver, func(ctx context.Context, host string) ([]net.IP, error) {
 		atomic.AddInt32(&counter, 1)
 		return []net.IP{net.IP("127.0.0.1")}, nil
-	}))
+	})
 
 	// add single record to cache to make refresh happen
 	resolver.LookupIP(context.Background(), "whatever.com")
-
-	defer resolver.Stop()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -185,13 +196,15 @@ func TestFetch(t *testing.T) {
 	var returnIPs []net.IP
 
 	ctx := context.Background()
-	resolver := testResolver(t, WithLookupIPFunc(func(ctx context.Context, host string) ([]net.IP, error) {
+	resolver := testResolver(t)
+	defer resolver.Stop()
+
+	setLookupUpFn(t, resolver, func(ctx context.Context, host string) ([]net.IP, error) {
 		mu.Lock()
 		ips := returnIPs
 		mu.Unlock()
 		return ips, nil
-	}))
-	defer resolver.Stop()
+	})
 
 	want1 := []net.IP{
 		net.IP("10.0.0.1"),
@@ -273,13 +286,15 @@ func TestErrorLog(t *testing.T) {
 			var logs = new(logsWriter)
 			logger := slog.New(slog.NewJSONHandler(logs, nil))
 
-			resolver, err := New(time.Millisecond, 0, WithLookupIPFunc(func(context.Context, string) (res []net.IP, err error) {
-				return nil, errors.New("err")
-			}), WithLogger(logger))
+			resolver, err := New(time.Millisecond, 0, WithLogger(logger))
 			if err != nil {
 				t.Fatalf("err: %s", err)
 			}
 			defer resolver.Stop()
+
+			setLookupUpFn(t, resolver, func(context.Context, string) (res []net.IP, err error) {
+				return nil, errors.New("err")
+			})
 
 			resolver.cacheMu.Lock()
 			resolver.cache = testCase.cache
