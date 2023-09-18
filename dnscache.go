@@ -29,12 +29,15 @@ type Resolver struct {
 	lookupIPFn    LookupIPFn
 	lookupTimeout time.Duration
 
-	lock  sync.RWMutex
-	cache map[string][]net.IP
+	cache   map[string][]net.IP
+	cacheMu sync.RWMutex
 
 	logger *slog.Logger
 
-	closer func()
+	refreshTicker *time.Ticker
+
+	closeCh     chan struct{}
+	closeFnOnce sync.Once
 }
 
 // New initializes DNS cache resolver and starts auto refreshing in a new goroutine.
@@ -46,13 +49,6 @@ func New(freq time.Duration, lookupTimeout time.Duration, options ...Option) (*R
 
 	if lookupTimeout <= 0 {
 		lookupTimeout = defaultLookupTimeout
-	}
-
-	ticker := time.NewTicker(freq)
-	ch := make(chan struct{})
-	closer := func() {
-		ticker.Stop()
-		close(ch)
 	}
 
 	r := &Resolver{
@@ -73,7 +69,8 @@ func New(freq time.Duration, lookupTimeout time.Duration, options ...Option) (*R
 		},
 		lookupTimeout: lookupTimeout,
 		cache:         make(map[string][]net.IP, cacheSize),
-		closer:        closer,
+		refreshTicker: time.NewTicker(freq),
+		closeCh:       make(chan struct{}),
 	}
 
 	for _, p := range options {
@@ -87,9 +84,9 @@ func New(freq time.Duration, lookupTimeout time.Duration, options ...Option) (*R
 	go func() {
 		for {
 			select {
-			case <-ticker.C:
+			case <-r.refreshTicker.C:
 				r.Refresh()
-			case <-ch:
+			case <-r.closeCh:
 				return
 			}
 		}
@@ -106,18 +103,18 @@ func (r *Resolver) LookupIP(ctx context.Context, addr string) ([]net.IP, error) 
 		return nil, err
 	}
 
-	r.lock.Lock()
+	r.cacheMu.Lock()
 	r.cache[addr] = ips
-	r.lock.Unlock()
+	r.cacheMu.Unlock()
 	return ips, nil
 }
 
 // Fetch fetches IP list from the cache. If IP list of the given addr is not in the cache,
 // then it lookups from DNS server by `Lookup` function.
 func (r *Resolver) Fetch(ctx context.Context, addr string) ([]net.IP, error) {
-	r.lock.RLock()
+	r.cacheMu.RLock()
 	ips, ok := r.cache[addr]
-	r.lock.RUnlock()
+	r.cacheMu.RUnlock()
 	if ok {
 		return ips, nil
 	}
@@ -126,12 +123,12 @@ func (r *Resolver) Fetch(ctx context.Context, addr string) ([]net.IP, error) {
 
 // Refresh refreshes IP list cache.
 func (r *Resolver) Refresh() {
-	r.lock.RLock()
+	r.cacheMu.RLock()
 	addrs := make([]string, 0, len(r.cache))
 	for addr := range r.cache {
 		addrs = append(addrs, addr)
 	}
-	r.lock.RUnlock()
+	r.cacheMu.RUnlock()
 
 	for _, addr := range addrs {
 		ctx, cancelF := context.WithTimeout(context.Background(), r.lookupTimeout)
@@ -144,10 +141,8 @@ func (r *Resolver) Refresh() {
 
 // Stop stops auto refreshing.
 func (r *Resolver) Stop() {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	if r.closer != nil {
-		r.closer()
-		r.closer = nil
-	}
+	r.closeFnOnce.Do(func() {
+		r.refreshTicker.Stop()
+		close(r.closeCh)
+	})
 }
