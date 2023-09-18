@@ -12,11 +12,11 @@ import (
 const (
 	// cacheSize is initial size of addr and IP list cache map.
 	cacheSize = 64
-)
 
-// defaultFreq is default frequency a resolver refreshes DNS cache.
-var (
-	defaultFreq          = 3 * time.Second
+	// defaultFreq is default frequency a resolver refreshes DNS cache.
+	defaultFreq = 3 * time.Second
+
+	// defaultLookupTimeout is default timeout for ip lookup
 	defaultLookupTimeout = 10 * time.Second
 )
 
