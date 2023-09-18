@@ -32,9 +32,7 @@ type Resolver struct {
 	lock  sync.RWMutex
 	cache map[string][]net.IP
 
-	// defaultLookupTimeout is used when refreshing DNS cache
-	defaultLookupTimeout time.Duration
-	logger               *slog.Logger
+	logger *slog.Logger
 
 	closer func()
 }
@@ -73,10 +71,9 @@ func New(freq time.Duration, lookupTimeout time.Duration, options ...Option) (*R
 
 			return ips, nil
 		},
-		lookupTimeout:        lookupTimeout,
-		cache:                make(map[string][]net.IP, cacheSize),
-		defaultLookupTimeout: lookupTimeout,
-		closer:               closer,
+		lookupTimeout: lookupTimeout,
+		cache:         make(map[string][]net.IP, cacheSize),
+		closer:        closer,
 	}
 
 	for _, p := range options {
@@ -137,7 +134,7 @@ func (r *Resolver) Refresh() {
 	r.lock.RUnlock()
 
 	for _, addr := range addrs {
-		ctx, cancelF := context.WithTimeout(context.Background(), r.defaultLookupTimeout)
+		ctx, cancelF := context.WithTimeout(context.Background(), r.lookupTimeout)
 		if _, err := r.LookupIP(ctx, addr); err != nil {
 			r.logger.Warn("failed to refresh DNS cache", "addr", addr, "error", err)
 		}
