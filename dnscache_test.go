@@ -18,7 +18,7 @@ var (
 	testDefaultLookupTimeout = 1 * time.Second
 )
 
-func testResolver(t *testing.T, params ...Param) *Resolver {
+func testResolver(t *testing.T, params ...Option) *Resolver {
 	t.Helper()
 	r, err := New(testFreq, testDefaultLookupTimeout, params...)
 	if err != nil {

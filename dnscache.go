@@ -2,8 +2,9 @@ package dnscache
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -25,7 +26,7 @@ type (
 
 // Resolver is DNS cache resolver which cache DNS resolve results in memory.
 type Resolver struct {
-	ipLookupFn         LookupIPFn
+	lookupIPFn         LookupIPFn
 	lookupTimeout      time.Duration
 	onCacheRefreshedFn func()
 
@@ -34,13 +35,14 @@ type Resolver struct {
 
 	// defaultLookupTimeout is used when refreshing DNS cache
 	defaultLookupTimeout time.Duration
+	logger               *slog.Logger
 
 	closer func()
 }
 
 // New initializes DNS cache resolver and starts auto refreshing in a new goroutine.
 // To stop refreshing, call `Stop()` function.
-func New(freq time.Duration, lookupTimeout time.Duration, params ...Param) (*Resolver, error) {
+func New(freq time.Duration, lookupTimeout time.Duration, options ...Option) (*Resolver, error) {
 	if freq <= 0 {
 		freq = defaultFreq
 	}
@@ -57,9 +59,9 @@ func New(freq time.Duration, lookupTimeout time.Duration, params ...Param) (*Res
 	}
 
 	r := &Resolver{
-		// ipLookupFn is a wrapper of net.DefaultResolver.LookupIPAddr.
+		// lookupIPFn is a wrapper of net.DefaultResolver.LookupIPAddr.
 		// This is used to replace lookup function when test.
-		ipLookupFn: func(ctx context.Context, host string) ([]net.IP, error) {
+		lookupIPFn: func(ctx context.Context, host string) ([]net.IP, error) {
 			addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 			if err != nil {
 				return nil, err
@@ -78,8 +80,12 @@ func New(freq time.Duration, lookupTimeout time.Duration, params ...Param) (*Res
 		closer:               closer,
 	}
 
-	for _, p := range params {
+	for _, p := range options {
 		p.apply(r)
+	}
+
+	if r.logger == nil {
+		r.logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	}
 
 	go func() {
@@ -102,7 +108,7 @@ func New(freq time.Duration, lookupTimeout time.Duration, params ...Param) (*Res
 // LookupIP lookups IP list from DNS server then it saves result in the cache.
 // If you want to get result from the cache use `Fetch` function.
 func (r *Resolver) LookupIP(ctx context.Context, addr string) ([]net.IP, error) {
-	ips, err := r.ipLookupFn(ctx, addr)
+	ips, err := r.lookupIPFn(ctx, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +143,7 @@ func (r *Resolver) Refresh() {
 	for _, addr := range addrs {
 		ctx, cancelF := context.WithTimeout(context.Background(), r.defaultLookupTimeout)
 		if _, err := r.LookupIP(ctx, addr); err != nil {
-			log.Printf("failed to refresh DNS cache. addr: '%v', error: '%v'", addr, err)
+			r.logger.Warn("failed to refresh DNS cache", "addr", addr, "error", err)
 		}
 		cancelF()
 	}
