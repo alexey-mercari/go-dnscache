@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net"
-	"os"
 	"sync"
 	"time"
 )
@@ -78,7 +77,7 @@ func New(freq time.Duration, lookupTimeout time.Duration, options ...Option) (*R
 	}
 
 	if r.logger == nil {
-		r.logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		r.logger = slog.Default()
 	}
 
 	go func() {
