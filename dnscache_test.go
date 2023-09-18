@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net"
 	"reflect"
 	"sync"
@@ -239,25 +239,61 @@ func TestFetch(t *testing.T) {
 	}
 }
 
+type logsWriter struct {
+	bytes.Buffer
+	mu sync.Mutex
+}
+
+func (w *logsWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.Buffer.Write(p)
+}
+
+func (w *logsWriter) Len() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.Buffer.Len()
+}
+
 func TestErrorLog(t *testing.T) {
-	done := make(chan struct{})
-
-	logs := new(bytes.Buffer)
-	log.SetOutput(logs)
-
-	resolver, err := New(0, 0, WithCustomIPLookupFunc(func(context.Context, string) ([]net.IP, error) {
-		defer close(done)
-		return nil, errors.New("err")
-	}))
-	if err != nil {
-		t.Fatalf("err: %s", err)
+	testCases := map[string]struct {
+		cache     map[string][]net.IP
+		expectErr bool
+	}{
+		"empty cache: no error": {},
+		"one item in cache: expect err": {
+			cache:     map[string][]net.IP{"ya.ru": {net.IP("127.0.0.1")}},
+			expectErr: true,
+		},
 	}
-	defer resolver.Stop()
-	resolver.LookupIP(context.Background(), "ya.ru")
 
-	<-done
+	for caseName, testCase := range testCases {
+		t.Run(caseName, func(t *testing.T) {
+			var logs = new(logsWriter)
+			logger := slog.New(slog.NewJSONHandler(logs, nil))
 
-	if logs.Len() > 0 {
-		t.Fatalf("unexpected logs with empty cache")
+			resolver, err := New(time.Millisecond, 0, WithCustomIPLookupFunc(func(context.Context, string) (res []net.IP, err error) {
+				return nil, errors.New("err")
+			}), WithLogger(logger))
+			if err != nil {
+				t.Fatalf("err: %s", err)
+			}
+			defer resolver.Stop()
+
+			resolver.cacheMu.Lock()
+			resolver.cache = testCase.cache
+			resolver.cacheMu.Unlock()
+
+			<-time.After(5 * time.Millisecond)
+
+			if testCase.expectErr {
+				if logs.Len() == 0 {
+					t.Fatalf("expected error to be logged, none found")
+				}
+			} else if logs.Len() > 0 {
+				t.Fatalf("unexpected logs with empty cache")
+			}
+		})
 	}
 }
