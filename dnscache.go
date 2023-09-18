@@ -26,9 +26,8 @@ type (
 
 // Resolver is DNS cache resolver which cache DNS resolve results in memory.
 type Resolver struct {
-	lookupIPFn         LookupIPFn
-	lookupTimeout      time.Duration
-	onCacheRefreshedFn func()
+	lookupIPFn    LookupIPFn
+	lookupTimeout time.Duration
 
 	lock  sync.RWMutex
 	cache map[string][]net.IP
@@ -93,9 +92,6 @@ func New(freq time.Duration, lookupTimeout time.Duration, options ...Option) (*R
 			select {
 			case <-ticker.C:
 				r.Refresh()
-				if r.onCacheRefreshedFn != nil {
-					r.onCacheRefreshedFn()
-				}
 			case <-ch:
 				return
 			}

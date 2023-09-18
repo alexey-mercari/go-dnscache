@@ -3,7 +3,7 @@ package dnscache
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"errors"
 	"log"
 	"net"
 	"reflect"
@@ -160,9 +160,14 @@ func TestRefresh(t *testing.T) {
 func TestRefreshed(t *testing.T) {
 	var counter int32
 
-	resolver, err := New(1*time.Millisecond, testDefaultLookupTimeout, WithRefreshCompletedListener(func() {
+	resolver, err := New(time.Millisecond, testDefaultLookupTimeout, WithCustomIPLookupFunc(func(ctx context.Context, host string) ([]net.IP, error) {
 		atomic.AddInt32(&counter, 1)
+		return []net.IP{net.IP("127.0.0.1")}, nil
 	}))
+
+	// add single record to cache to make refresh happen
+	resolver.LookupIP(context.Background(), "whatever.com")
+
 	defer resolver.Stop()
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -240,18 +245,15 @@ func TestErrorLog(t *testing.T) {
 	logs := new(bytes.Buffer)
 	log.SetOutput(logs)
 
-	resolver, err := New(0, 0,
-		WithCustomIPLookupFunc(func(ctx context.Context, host string) ([]net.IP, error) {
-			return nil, fmt.Errorf("err")
-		}),
-		WithRefreshCompletedListener(func() {
-			close(done)
-		}),
-	)
+	resolver, err := New(0, 0, WithCustomIPLookupFunc(func(context.Context, string) ([]net.IP, error) {
+		defer close(done)
+		return nil, errors.New("err")
+	}))
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
 	defer resolver.Stop()
+	resolver.LookupIP(context.Background(), "ya.ru")
 
 	<-done
 
